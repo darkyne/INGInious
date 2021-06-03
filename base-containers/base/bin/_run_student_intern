@@ -8,11 +8,14 @@ import shlex
 import socket
 import subprocess
 import threading
-
+import tempfile
+import stat
+import time
 import msgpack
 import array
-
 import resource
+
+# TODO: setLimits, set_executable, execute_process, the sshd and wait for user parts are already implemeneted in INGInious
 
 
 def handle_signals(subprocess, socket):
@@ -34,10 +37,39 @@ def recv_fds(sock, msglen, maxfds):
             fds.fromstring(cmsg_data[:len(cmsg_data) - (len(cmsg_data) % fds.itemsize)])
     return msg, list(fds)
 
-def setlimits():
+
+def setLimits():  # TODO: check if run as root or not
     os.setgid(4242)
     os.setuid(4242)
     resource.setrlimit(resource.RLIMIT_NPROC, (1000, 1000))
+
+
+def set_executable(filename):
+    st = os.stat(filename)
+    os.chmod(filename, st.st_mode | stat.S_IEXEC)
+
+
+def execute_process(args, stdin_string="", internal_command=False):
+    if not isinstance(args, list):
+        args = [args]
+
+    stdin = tempfile.TemporaryFile()
+    stdin.write(stdin_string.encode('utf-8'))
+    stdin.seek(0)
+
+    stdout = tempfile.TemporaryFile()
+    stderr = tempfile.TemporaryFile()
+    if internal_command:
+        pr = subprocess.Popen(args, stdin=stdin, stdout=stdout, stderr=stderr)
+    else:
+        set_executable(args[0])
+        pr = subprocess.Popen(args, preexec_fn=setLimits, stdin=stdin, stdout=stdout, stderr=stderr)
+    pr.wait()
+    stdout.seek(0)
+    stderr.seek(0)
+    return stdout.read(), stderr.read()
+
+
 
 # Connect to the socket
 client = socket.socket(socket.AF_UNIX)  # , socket.SOCK_CLOEXEC) # for linux only
@@ -79,17 +111,71 @@ print("Chdir")
 os.chdir(start_cmd["working_dir"])
 print("Popen")
 print(fds)
-p = subprocess.Popen(shlex.split(start_cmd["command"]), preexec_fn=setlimits, stdin=fds[0], stdout=fds[1], stderr=fds[2])
 
-# Handle the signals
-print("Signal thread")
-thread = threading.Thread(target=lambda: handle_signals(p, client), daemon=True)
-thread.start()
+if start_cmd["ssh"]:
+    # Generate password
+    password, _ = execute_process(["/usr/bin/openssl", "rand", "-base64", "10"], internal_command=True)
+    password = password.decode('utf8').strip()
+    ssh_user = "worker"  # or root with Kata
+    execute_process(["/usr/bin/bash", "-c", "echo '{}:{}' | chpasswd".format(ssh_user, password)],
+                    internal_command=True)
+    # generate the host keys
+    execute_process(["/usr/bin/ssh-keygen", "-A"], internal_command=True)
 
-# Wait until the subprocess exit
-print("Waiting for process to end")
-retval = p.wait()
+    # remove /run/nologin if it exists
+    if os.path.exists("/run/nologin"):
+        os.unlink("/run/nologin")
 
-# Exit with the same return value than the process (it will be given to docker and given back to run_student)
-print("Exiting")
-exit(retval)
+    # Start the ssh server
+    execute_process(["/usr/sbin/sshd",
+                    "-p", "22",
+                    "-o", "PermitRootLogin=no",
+                    "-o", "PasswordAuthentication=yes", "-o", "StrictModes=no", "-o",
+                    "AllowUsers={}".format(ssh_user)], internal_command=True)
+
+    # Send ssh information
+    client.send(msgpack.dumps({"type": "ssh_student", "ssh_user": ssh_user, "password": password}))
+
+    # Wait until someone connects to the server
+    connected_workers = 0
+    attempts = 0
+    while connected_workers == 0 and attempts < 120:  # wait max 2min
+        time.sleep(1)
+        stdout, stderr = execute_process(
+            ["/bin/bash", "-c", "ps -f -C sshd | grep '{}@pts' | wc -l".format(ssh_user)], internal_command=True)
+        connected_workers = int(stdout)
+        attempts += 1
+
+    # If someone is connected, wait until no one remains
+    if connected_workers != 0:
+        attempts = 0
+        while connected_workers != 0 and attempts < 60 * 30: # TODO: the student can only be connected for 30 min... This value should be a parameter
+            time.sleep(1)
+            stdout, stderr = execute_process(
+                ["/bin/bash", "-c", "ps -f -C sshd | grep '{}@pts' | wc -l".format(ssh_user)], internal_command=True)
+            connected_workers = int(stdout)
+            attempts += 1
+    else:
+        print("NO ONE CONNECTED")
+        exit(253)
+        # TODO: For now, if no one connected, the grading-script continues. Maybe send an error message instead.
+        # client.send(msgpack.dumps({"type": "ssh_error"}))
+    exit("ssh_ok")
+
+
+else:
+    # Do the usual things
+    p = subprocess.Popen(shlex.split(start_cmd["command"]), preexec_fn=setLimits, stdin=fds[0], stdout=fds[1], stderr=fds[2])
+    # Handle the signals
+    print("Signal thread")
+    thread = threading.Thread(target=lambda: handle_signals(p, client), daemon=True)
+    thread.start()
+    # Wait until the subprocess exit
+    print("Waiting for process to end")
+    retval = p.wait()
+
+    # Exit with the same return value than the process (it will be given to docker and given back to run_student)
+    print("Exiting")
+    exit(retval)
+
+

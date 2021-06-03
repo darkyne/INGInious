@@ -7,6 +7,8 @@ import os
 import signal
 import socket
 import tempfile
+import asyncio
+import zmq.asyncio
 
 import msgpack
 import zmq
@@ -15,7 +17,7 @@ def run_student(cmd, container=None,
         time_limit=0, hard_time_limit=0,
         memory_limit=0, share_network=False,
         working_dir=None, stdin=None, stdout=None, stderr=None,
-        signal_handler_callback=None):
+        signal_handler_callback=None, ssh=False):
     """
     Run a command inside a student container
     :param cmd: command to be ran (as a string, with parameters)
@@ -81,11 +83,12 @@ def run_student(cmd, container=None,
         zmq_socket.send(msgpack.dumps({"type": "run_student", "environment": container,
                                    "time_limit": time_limit, "hard_time_limit": hard_time_limit,
                                    "memory_limit": memory_limit, "share_network": share_network,
-                                   "socket_id": socket_id}, use_bin_type=True))
+                                   "socket_id": socket_id, "ssh": ssh}, use_bin_type=True))
 
         # Check if the container was correctly started
         message = msgpack.loads(zmq_socket.recv(), use_list=False, strict_map_key=False)
         assert message["type"] == "run_student_started"
+        student_container_id = message["container_id"]
 
         # Send a dummy message to ask for retval
         zmq_socket.send(msgpack.dumps({"type": "run_student_ask_retval", "socket_id": socket_id}, use_bin_type=True))
@@ -99,7 +102,7 @@ def run_student(cmd, container=None,
 
         # send the fds and the command/workdir
         connection.sendmsg([b'S'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [stdin, stdout, stderr]))])
-        connection.send(msgpack.dumps({"command": cmd, "working_dir": working_dir}))
+        connection.send(msgpack.dumps({"command": cmd, "working_dir": working_dir, "ssh": ssh}))
 
         # Allow to send signals
         if signal_handler_callback is not None:
@@ -109,7 +112,19 @@ def run_student(cmd, container=None,
 
             signal_handler_callback(receive_signal)
 
+        if ssh:  # The student_container will send id and password for ssh connection, transfer it to the agent
+            ssh_id = msgpack.loads(connection.recv(250))  # TODO: Why 250? It works but why ?
+            if ssh_id["type"] == "ssh_student":
+                msg = {"type": "ssh_student", "ssh_user": ssh_id["ssh_user"], "ssh_key": ssh_id["password"], "container_id": student_container_id}
+                send_socket = zmq.asyncio.Context().socket(zmq.REQ)
+                send_socket.connect("ipc:///sockets/main.sock")
+                loop = asyncio.get_event_loop()
+                task = loop.create_task(send_intern_message(send_socket, msg))
+                loop.run_until_complete(task)
+                loop.close()
+
         # Wait for everything to end
+        # message = message from agent telling the student_container finished
         message = msgpack.loads(zmq_socket.recv(), use_list=False, strict_map_key=False)
 
         # Unlink unneeded files
@@ -126,7 +141,7 @@ def run_student(cmd, container=None,
 def run_student_simple(cmd, cmd_input=None, container=None,
         time_limit=0, hard_time_limit=0,
         memory_limit=0, share_network=False,
-        working_dir=None, stdout_err_fuse=False, text="utf-8"):
+        working_dir=None, stdout_err_fuse=False, text="utf-8", ssh=False):
     """
     A simpler version of `run`, which takes an input string and return the output of the command.
     This disallows interactive processes.
@@ -167,7 +182,7 @@ def run_student_simple(cmd, cmd_input=None, container=None,
         stderr_r, stderr_w = os.pipe()
 
     retval = run_student(cmd, container, time_limit, hard_time_limit, memory_limit,
-                         share_network, working_dir, stdin, stdout_w, stderr_w)
+                         share_network, working_dir, stdin, stdout_w, stderr_w, ssh=ssh)
 
     preprocess_out = (lambda x: x.decode(text)) if text is not False else (lambda x: x)
 
@@ -190,3 +205,8 @@ def _hack_signals(receive_signal):
                 signal.signal(signum, lambda x, _: receive_signal)
             except:
                 pass
+
+
+async def send_intern_message(send_socket, msg):
+    send_socket.send(msgpack.dumps(msg, use_bin_type=True))
+    send_socket.recv()
