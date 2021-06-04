@@ -113,9 +113,10 @@ def run_student(cmd, container=None,
             signal_handler_callback(receive_signal)
 
         if ssh:  # The student_container will send id and password for ssh connection, transfer it to the agent
-            ssh_id = msgpack.loads(connection.recv(250))  # TODO: Why 250? It works but why ?
+            ssh_id = msgpack.loads(connection.recv(240))  # The message is asserted to be 240 bytes before sending
             if ssh_id["type"] == "ssh_student":
-                msg = {"type": "ssh_student", "ssh_user": ssh_id["ssh_user"], "ssh_key": ssh_id["password"], "container_id": student_container_id}
+                ssh_user = "root" if ssh_id["ssh_user"] else "worker"  # 1 for root, 0 for worker
+                msg = {"type": "ssh_student", "ssh_user": ssh_user, "ssh_key": ssh_id["password"], "container_id": student_container_id}
                 send_socket = zmq.asyncio.Context().socket(zmq.REQ)
                 send_socket.connect("ipc:///sockets/main.sock")
                 loop = asyncio.get_event_loop()

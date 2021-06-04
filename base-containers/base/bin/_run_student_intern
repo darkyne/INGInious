@@ -8,10 +8,10 @@ import shlex
 import socket
 import subprocess
 import threading
-import time
 import msgpack
 import array
-from inginious_container_api.utils import set_limits, execute_process
+import sys
+from inginious_container_api.utils import set_limits, execute_process, start_ssh_server, ssh_wait
 
 
 def handle_signals(subprocess, socket):
@@ -32,6 +32,7 @@ def recv_fds(sock, msglen, maxfds):
             # Append data, ignoring any truncated integers at the end.
             fds.fromstring(cmsg_data[:len(cmsg_data) - (len(cmsg_data) % fds.itemsize)])
     return msg, list(fds)
+
 
 # Connect to the socket
 client = socket.socket(socket.AF_UNIX)  # , socket.SOCK_CLOEXEC) # for linux only
@@ -75,55 +76,18 @@ print("Popen")
 print(fds)
 
 if start_cmd["ssh"]:
-    # Generate password
-    password, _ = execute_process(["/usr/bin/openssl", "rand", "-base64", "10"], internal_command=True)
-    password = password.decode('utf8').strip()
-    ssh_user = "worker"  # or root with Kata
-    execute_process(["/usr/bin/bash", "-c", "echo '{}:{}' | chpasswd".format(ssh_user, password)],
-                    internal_command=True)
-    # generate the host keys
-    execute_process(["/usr/bin/ssh-keygen", "-A"], internal_command=True)
-
-    # remove /run/nologin if it exists
-    if os.path.exists("/run/nologin"):
-        os.unlink("/run/nologin")
-
-    # Start the ssh server
-    execute_process(["/usr/sbin/sshd",
-                    "-p", "22",
-                    "-o", "PermitRootLogin=no",
-                    "-o", "PasswordAuthentication=yes", "-o", "StrictModes=no", "-o",
-                    "AllowUsers={}".format(ssh_user)], internal_command=True)
+    # Start ssh server
+    ssh_user, password = start_ssh_server()
 
     # Send ssh information
-    client.send(msgpack.dumps({"type": "ssh_student", "ssh_user": ssh_user, "password": password}))
+    ssh_user_value = 0 if ssh_user == "worker" else 1  # 0 for worker, 1 for root
+    message = {"type": "ssh_student", "ssh_user": ssh_user_value, "password": password}
+    assert (sys.getsizeof(message)) == 240 #Ensure a constant size of 240 bytes
+    client.send(msgpack.dumps(message))
 
-    # Wait until someone connects to the server
-    connected_workers = 0
-    attempts = 0
-    while connected_workers == 0 and attempts < 120:  # wait max 2min
-        time.sleep(1)
-        stdout, stderr = execute_process(
-            ["/bin/bash", "-c", "ps -f -C sshd | grep '{}@pts' | wc -l".format(ssh_user)], internal_command=True)
-        connected_workers = int(stdout)
-        attempts += 1
-
-    # If someone is connected, wait until no one remains
-    if connected_workers != 0:
-        attempts = 0
-        while connected_workers != 0 and attempts < 60 * 30: # TODO: the student can only be connected for 30 min... This value should be a parameter
-            time.sleep(1)                                    #  Solution: Simply remove the condition on attemps, since anyway it would end based on the task timeout
-            stdout, stderr = execute_process(
-                ["/bin/bash", "-c", "ps -f -C sshd | grep '{}@pts' | wc -l".format(ssh_user)], internal_command=True)
-            connected_workers = int(stdout)
-            attempts += 1
-    else:
-        print("NO ONE CONNECTED")
-        exit(253)
-        # TODO: For now, if no one connected, the grading-script continues. Maybe send an error message instead.
-        # client.send(msgpack.dumps({"type": "ssh_error"}))
+    # Wait for user to connect and leave
+    ssh_wait(ssh_user)
     exit("ssh_ok")
-
 
 else:
     # Do the usual things

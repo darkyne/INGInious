@@ -49,6 +49,7 @@ class DockerRunningJob:
     run_cmd: str
     assigned_external_ports: List[int]
     student_containers: Set[str]  # container ids of student containers
+    enable_network: bool
 
 
 @dataclass
@@ -390,7 +391,8 @@ class DockerAgent(Agent):
             course_common_student_path=course_common_student_path,
             run_cmd=run_cmd,
             assigned_external_ports=list(ports.values()),
-            student_containers=set()
+            student_containers=set(),
+            enable_network=enable_network
         )
 
         self._containers_running[container_id] = info
@@ -575,14 +577,18 @@ class DockerAgent(Agent):
 
                             elif msg["type"] == "ssh_student":
                                 # send the data to the frontend (and client) to reach student_container
-                                info_student = None
-                                if len(self._student_containers_running) > 0:
-                                    info_student = self._student_containers_running[msg["container_id"]]
+                                if info.enable_network:
+                                    info_student = None
+                                    if len(self._student_containers_running) > 0:
+                                        info_student = self._student_containers_running[msg["container_id"]]
+                                    else:
+                                        self._logger.exception("Exception: no student_container running.")
+                                    self._logger.info("%s %s", info_student.container_id, str(msg))
+                                    await self.send_ssh_job_info(info.job_id, self._address_host, info_student.ports[22], msg["ssh_user"], msg["ssh_key"])
                                 else:
-                                    self._logger.exception("Exception: no student_container running.")
-                                self._logger.info("%s %s", info_student.container_id, str(msg))
-                                await self.send_ssh_job_info(info.job_id, self._address_host, info_student.ports[22], msg["ssh_user"], msg["ssh_key"])
-
+                                    await self.send_job_result(info.job_id, "ssh for student requires internet access in the task configuration !")
+                                    self._logger.exception("Exception: ssh for student requires internet access in the task configuration !.")
+                                    await self.kill_job(BackendKillJob(job_id=info.job_id))  # Just to be 100% sure the job is killed
                             elif msg["type"] == "result":
                                 # last message containing the results of the container
                                 result = msg["result"]
