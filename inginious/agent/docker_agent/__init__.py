@@ -569,12 +569,12 @@ class DockerAgent(Agent):
                                                                                      time_limit, hard_time_limit, share_network,
                                                                                      write_stream, ssh))
                             elif msg["type"] == "ssh_debug":
-                                # send the data to the backend (and client) to reach grading_container
+                                # send the data to the frontend (and client) to reach grading_container
                                 self._logger.info("%s %s", info.container_id, str(msg))
                                 await self.send_ssh_job_info(info.job_id, self._address_host, info.ports[22], msg["ssh_user"], msg["ssh_key"])
 
                             elif msg["type"] == "ssh_student":
-                                # send the data to the backend (and client) to reach student_container
+                                # send the data to the frontend (and client) to reach student_container
                                 info_student = None
                                 if len(self._student_containers_running) > 0:
                                     info_student = self._student_containers_running[msg["container_id"]]

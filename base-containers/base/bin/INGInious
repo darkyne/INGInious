@@ -65,7 +65,7 @@ class INGIniousMainRunner:
                 os.chown(os.path.join(root, f), 4242, 4242)
 
 
-    def setLimits(self):
+    def set_limits(self):
         if not self.run_as_root:
             self._logger.info("Running as worker/4242")
             os.setgid(4242)
@@ -95,7 +95,7 @@ class INGIniousMainRunner:
             p = subprocess.Popen(args, stdin=stdin, stdout=stdout, stderr=stderr)
         else:
             self.set_executable(args[0])
-            p = subprocess.Popen(args, preexec_fn=self.setLimits, stdin=stdin, stdout=stdout, stderr=stderr)
+            p = subprocess.Popen(args, preexec_fn=self.set_limits, stdin=stdin, stdout=stdout, stderr=stderr)
         p.wait()
         stdout.seek(0)
         stderr.seek(0)
