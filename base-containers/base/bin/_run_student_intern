@@ -11,7 +11,7 @@ import threading
 import msgpack
 import array
 import sys
-from inginious_container_api.utils import set_limits, execute_process, start_ssh_server, ssh_wait
+from inginious_container_api.utils import set_limits_user, start_ssh_server, ssh_wait
 
 
 def handle_signals(subprocess, socket):
@@ -59,6 +59,7 @@ while start_cmd is None:
     for obj in unpacker:
         start_cmd = obj
 print("Unpacked start cmd")
+user = start_cmd["user"]  # Know if you are worker (on docker) or root (on Kata)
 
 # Add some elements to /etc/hosts and /etc/resolv.conf if needed
 system_files = {"hosts": ("/etc/hosts", True), "resolv.conf": ("/etc/resolv.conf", False)}
@@ -77,20 +78,19 @@ print(fds)
 
 if start_cmd["ssh"]:
     # Start ssh server
-    ssh_user, password = start_ssh_server()
-
+    ssh_user, password = start_ssh_server(user)
     # Send ssh information
     ssh_user_value = 0 if ssh_user == "worker" else 1  # 0 for worker, 1 for root
     message = {"type": "ssh_student", "ssh_user": ssh_user_value, "password": password}
-    assert (sys.getsizeof(message)) == 240 #Ensure a constant size of 240 bytes
+    assert (sys.getsizeof(message)) == 240  # Ensure a constant size of 240 bytes
     client.send(msgpack.dumps(message))
-
     # Wait for user to connect and leave
-    ssh_wait(ssh_user)
-    exit("ssh_ok")
+    retval = ssh_wait(ssh_user)
+    exit(retval)
 
 else:
     # Do the usual things
+    set_limits = (lambda: set_limits_user(user))
     p = subprocess.Popen(shlex.split(start_cmd["command"]), preexec_fn=set_limits, stdin=fds[0], stdout=fds[1], stderr=fds[2])
     # Handle the signals
     print("Signal thread")

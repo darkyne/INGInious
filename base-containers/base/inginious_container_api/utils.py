@@ -10,9 +10,11 @@ import resource
 import stat
 import time
 
-def set_limits():  # TODO: check if run as root or not
-    os.setgid(4242)
-    os.setuid(4242)
+def set_limits_user(user):
+    if user == "worker":
+        os.setgid(4242)
+        os.setuid(4242)
+    os.environ["HOME"] = "/task"
     resource.setrlimit(resource.RLIMIT_NPROC, (1000, 1000))
 
 
@@ -21,10 +23,10 @@ def set_executable(filename):
     os.chmod(filename, st.st_mode | stat.S_IEXEC)
 
 
-def execute_process(args, stdin_string="", internal_command=False):
+def execute_process(args, stdin_string="", internal_command=False, user="worker"):
     if not isinstance(args, list):
         args = [args]
-
+    set_limits = (lambda: set_limits_user(user))
     stdin = tempfile.TemporaryFile()
     stdin.write(stdin_string.encode('utf-8'))
     stdin.seek(0)
@@ -41,15 +43,14 @@ def execute_process(args, stdin_string="", internal_command=False):
     stderr.seek(0)
     return stdout.read(), stderr.read()
 
-def start_ssh_server():
+def start_ssh_server(ssh_user):
     # Generate password
-    password, _ = execute_process(["/usr/bin/openssl", "rand", "-base64", "10"], internal_command=True)
+    password, _ = execute_process(["/usr/bin/openssl", "rand", "-base64", "10"], internal_command=True, user=ssh_user)
     password = password.decode('utf8').strip()
-    ssh_user = "worker"  # or root with Kata
     execute_process(["/usr/bin/bash", "-c", "echo '{}:{}' | chpasswd".format(ssh_user, password)],
-                    internal_command=True)
+                    internal_command=True, user=ssh_user)
     # generate the host keys
-    execute_process(["/usr/bin/ssh-keygen", "-A"], internal_command=True)
+    execute_process(["/usr/bin/ssh-keygen", "-A"], internal_command=True, user=ssh_user)
 
     # remove /run/nologin if it exists
     if os.path.exists("/run/nologin"):
@@ -60,29 +61,35 @@ def start_ssh_server():
                     "-p", "22",
                     "-o", "PermitRootLogin=no",
                     "-o", "PasswordAuthentication=yes", "-o", "StrictModes=no", "-o",
-                    "AllowUsers={}".format(ssh_user)], internal_command=True)
+                    "AllowUsers={}".format(ssh_user)], internal_command=True, user=ssh_user)
     return ssh_user, password
 
 
-def ssh_wait(ssh_user):
-    # Wait until someone connects to the server. Returns 0 if it went well
+def ssh_wait(ssh_user, timeout=None):
+    """
+    Wait maximum 2 minutes for user ssh_user to connect.
+    Wait for the user to leave. No timeout unless specified (the container has already a timeout anyway)
+    """
     connected_workers = 0
     attempts = 0
-    while connected_workers == 0 and attempts < 120:  # wait max 2min
+    while connected_workers == 0 and attempts < 120:  # wait max 2min for someone to connect
         time.sleep(1)
         stdout, stderr = execute_process(
-            ["/bin/bash", "-c", "ps -f -C sshd | grep '{}@pts' | wc -l".format(ssh_user)], internal_command=True)
+            ["/bin/bash", "-c", "ps -f -C sshd | grep '{}@pts' | wc -l".format(ssh_user)], internal_command=True, user=ssh_user)
         connected_workers = int(stdout)
         attempts += 1
-
-    # If someone is connected, wait until no one remains
-    if connected_workers != 0:
+    attempts = 0
+    if connected_workers != 0:  # If someone is connected, wait until no one remains
         while connected_workers != 0:
+            if timeout is not None and attempts >= timeout:
+                print("Timeout while user was still connected !")
+                return 253  # timeout
             time.sleep(1)
             stdout, stderr = execute_process(
-                ["/bin/bash", "-c", "ps -f -C sshd | grep '{}@pts' | wc -l".format(ssh_user)], internal_command=True)
+                ["/bin/bash", "-c", "ps -f -C sshd | grep '{}@pts' | wc -l".format(ssh_user)], internal_command=True, user=ssh_user)
             connected_workers = int(stdout)
-        return 0
+            attempts += 1
+        return 0  # The user connected and disconnected
     else:
-        print("NO ONE CONNECTED")
-        return 1
+        print("No one connected !")
+        return 253  # timeout

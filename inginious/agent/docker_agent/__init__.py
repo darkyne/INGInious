@@ -225,6 +225,7 @@ class DockerAgent(Agent):
                         container_id = i["id"]
                         try:
                             retval = int(i["Actor"]["Attributes"]["exitCode"])
+
                         except asyncio.CancelledError:
                             raise
                         except:

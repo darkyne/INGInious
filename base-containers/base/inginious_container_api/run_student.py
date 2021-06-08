@@ -17,7 +17,7 @@ def run_student(cmd, container=None,
         time_limit=0, hard_time_limit=0,
         memory_limit=0, share_network=False,
         working_dir=None, stdin=None, stdout=None, stderr=None,
-        signal_handler_callback=None, ssh=False):
+        signal_handler_callback=None, ssh=False, run_as_root=False):
     """
     Run a command inside a student container
     :param cmd: command to be ran (as a string, with parameters)
@@ -56,6 +56,7 @@ def run_student(cmd, container=None,
         stdout = open(os.devnull, 'rb').fileno()
     if stderr is None:
         stderr = open(os.devnull, 'rb').fileno()
+    user = "root" if run_as_root else "worker"
 
     try:
         # creates a placeholder for the socket
@@ -102,14 +103,13 @@ def run_student(cmd, container=None,
 
         # send the fds and the command/workdir
         connection.sendmsg([b'S'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [stdin, stdout, stderr]))])
-        connection.send(msgpack.dumps({"command": cmd, "working_dir": working_dir, "ssh": ssh}))
+        connection.send(msgpack.dumps({"command": cmd, "working_dir": working_dir, "ssh": ssh, "user": user}))
 
         # Allow to send signals
         if signal_handler_callback is not None:
             def receive_signal(signum_s):
                 signum_data = str(signum_s).zfill(3).encode("utf8")
                 connection.send(signum_data)
-
             signal_handler_callback(receive_signal)
 
         if ssh:  # The student_container will send id and password for ssh connection, transfer it to the agent
@@ -206,7 +206,6 @@ def _hack_signals(receive_signal):
                 signal.signal(signum, lambda x, _: receive_signal)
             except:
                 pass
-
 
 async def send_intern_message(send_socket, msg):
     send_socket.send(msgpack.dumps(msg, use_bin_type=True))
