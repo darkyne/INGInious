@@ -23,6 +23,7 @@ def handle_signals(subprocess, socket):
         print("received %s" % signal.decode("utf8"))
         subprocess.send_signal(int(signal.decode('utf8')))
 
+
 def recv_fds(sock, msglen, maxfds):
     """ Receive FDs from the unix socket. Copy-pasted from the Python doc """
     fds = array.array("i")  # Array of ints
@@ -76,15 +77,21 @@ os.chdir(start_cmd["working_dir"])
 print("Popen")
 print(fds)
 
-set_limits = (lambda: set_limits_user(user))
+set_limits = (lambda: set_limits_user(user))  # To know if the command should be executed as root or worker
+if start_cmd["command"] is None or start_cmd["command"] == "":  # Avoid to ron an empty command
+    start_cmd["command"] = "echo 'student_container started' "
 
-if start_cmd["ssh"]:  # If a command is specified, run it before starting the ssh server
+# Run the command
+p = subprocess.Popen(shlex.split(start_cmd["command"]), preexec_fn=set_limits, stdin=fds[0], stdout=fds[1], stderr=fds[2])
+# Handle the signals
+print("Signal thread")
+thread = threading.Thread(target=lambda: handle_signals(p, client), daemon=True)
+thread.start()
+# Wait until the subprocess exit
+print("Waiting for process to end")
+retval = p.wait()
 
-    if start_cmd["command"] is not None and start_cmd["command"] != "":
-        p = subprocess.Popen(shlex.split(start_cmd["command"]), preexec_fn=set_limits, stdin=fds[0], stdout=fds[1],
-                         stderr=fds[2])
-        p.wait()
-
+if start_cmd["ssh"]:
     # Start ssh server
     ssh_user, password = start_ssh_server(user)
     # Send ssh information
@@ -94,21 +101,8 @@ if start_cmd["ssh"]:  # If a command is specified, run it before starting the ss
     client.send(msgpack.dumps(message))
     # Wait for user to connect and leave
     retval = ssh_wait(ssh_user)
-    exit(retval)
-
-else:
-    # Do the usual things
-    p = subprocess.Popen(shlex.split(start_cmd["command"]), preexec_fn=set_limits, stdin=fds[0], stdout=fds[1], stderr=fds[2])
-    # Handle the signals
-    print("Signal thread")
-    thread = threading.Thread(target=lambda: handle_signals(p, client), daemon=True)
-    thread.start()
-    # Wait until the subprocess exit
-    print("Waiting for process to end")
-    retval = p.wait()
-
-    # Exit with the same return value than the process (it will be given to docker and given back to run_student)
     print("Exiting")
     exit(retval)
-
-
+else:
+    print("Exiting")
+    exit(retval)

@@ -9,8 +9,8 @@ import sys
 from inginious_container_api import run_student
 
 #ssh_student simply runs the basic version of run_student without any cmd (laucnhing a ssh server instead)
-parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, description='If there is a command specified, runs it in a student container \n\
-then allows the student to have an ssh access to this safe environment.\n\
+parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, description='Gives to the student a ssh access to a safe environment.\n\
+If a command was specified, runs it in the student container before starting the ssh server. \n\
 This command will proxy stdin, stdout, stderr, most signals and the return value. \n\n\
 There are special return values: \n\
 * 252 means that the command was killed due to an out-of-memory \n\

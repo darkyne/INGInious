@@ -60,6 +60,7 @@ class DockerRunningStudentContainer:
     write_stream: Any
     ssh: bool
     ports: Dict[int, int]  # internal port -> external port mapping
+    assigned_external_ports: List[int]
 
 
 class DockerAgent(Agent):
@@ -478,7 +479,8 @@ class DockerAgent(Agent):
                 socket_id=socket_id,
                 write_stream=write_stream,
                 ssh=ssh,
-                ports=ports
+                ports=ports,
+                assigned_external_ports=list(ports.values())
             )
 
             parent_info.student_containers.add(container_id)
@@ -630,6 +632,10 @@ class DockerAgent(Agent):
 
             # Delete remaining student containers
             info.parent_info.student_containers.remove(container_id)
+
+            # Allow other container to reuse the external ports this container has finished to use
+            for p in info.assigned_external_ports:
+                self._external_ports.add(p)
 
             killed = await self._timeout_watcher.was_killed(container_id)
             if container_id in self._containers_killed:

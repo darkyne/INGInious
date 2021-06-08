@@ -2,7 +2,6 @@
 #
 # This file is part of INGInious. See the LICENSE and the COPYRIGHTS files for
 # more information about the licensing of this file.
-
 import os
 import tempfile
 import subprocess
@@ -68,10 +67,8 @@ def start_ssh_server(ssh_user):
 
 
 def ssh_wait(ssh_user, timeout=None):
-    """
-    Wait maximum 2 minutes for user ssh_user to connect.
-    Wait for the user to leave. No timeout unless specified (the container has already a timeout anyway)
-    """
+    """ Wait maximum 2 minutes for user ssh_user to connect.
+    Wait for the user to leave. No timeout unless specified (the container has already a timeout anyway)"""
     connected_workers = 0
     attempts = 0
     while connected_workers == 0 and attempts < 120:  # wait max 2min for someone to connect
