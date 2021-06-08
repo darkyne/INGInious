@@ -76,7 +76,15 @@ os.chdir(start_cmd["working_dir"])
 print("Popen")
 print(fds)
 
-if start_cmd["ssh"]:
+set_limits = (lambda: set_limits_user(user))
+
+if start_cmd["ssh"]:  # If a command is specified, run it before starting the ssh server
+
+    if start_cmd["command"] is not None and start_cmd["command"] != "":
+        p = subprocess.Popen(shlex.split(start_cmd["command"]), preexec_fn=set_limits, stdin=fds[0], stdout=fds[1],
+                         stderr=fds[2])
+        p.wait()
+
     # Start ssh server
     ssh_user, password = start_ssh_server(user)
     # Send ssh information
@@ -90,7 +98,6 @@ if start_cmd["ssh"]:
 
 else:
     # Do the usual things
-    set_limits = (lambda: set_limits_user(user))
     p = subprocess.Popen(shlex.split(start_cmd["command"]), preexec_fn=set_limits, stdin=fds[0], stdout=fds[1], stderr=fds[2])
     # Handle the signals
     print("Signal thread")

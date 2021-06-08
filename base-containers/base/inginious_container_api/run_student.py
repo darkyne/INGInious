@@ -20,7 +20,7 @@ def run_student(cmd, container=None,
         signal_handler_callback=None, ssh=False, run_as_root=False):
     """
     Run a command inside a student container
-    :param cmd: command to be ran (as a string, with parameters)
+    :param cmd: command to be ran (as a string, with parameters). If ssh is set to True, this command will be run before launching the ssh server.
 
     :param container: container to use. Must be present in the current agent. By default it is None, meaning the current
                       container type will be used.
@@ -39,6 +39,8 @@ def run_student(cmd, container=None,
                                     this function can itself be called with a signal value that will immediately be sent
                                     to the remote process. See the run_student script command for an example, or
                                     the hack_signals function below.
+    :param ssh: If set to True, it starts an ssh server for the student instead of running the command as usual.
+    :param run_as_root: If set to True, it tries to execute the command as root (for ssh, it accepts connection as root)
     :return: the return value of the calling process. There are special values:
         - 251 means that run_student is not available in this container/environment
         - 252 means that the command was killed due to an out-of-memory
@@ -142,7 +144,7 @@ def run_student(cmd, container=None,
 def run_student_simple(cmd, cmd_input=None, container=None,
         time_limit=0, hard_time_limit=0,
         memory_limit=0, share_network=False,
-        working_dir=None, stdout_err_fuse=False, text="utf-8", ssh=False):
+        working_dir=None, stdout_err_fuse=False, text="utf-8"):
     """
     A simpler version of `run`, which takes an input string and return the output of the command.
     This disallows interactive processes.
@@ -183,7 +185,7 @@ def run_student_simple(cmd, cmd_input=None, container=None,
         stderr_r, stderr_w = os.pipe()
 
     retval = run_student(cmd, container, time_limit, hard_time_limit, memory_limit,
-                         share_network, working_dir, stdin, stdout_w, stderr_w, ssh=ssh)
+                         share_network, working_dir, stdin, stdout_w, stderr_w)
 
     preprocess_out = (lambda x: x.decode(text)) if text is not False else (lambda x: x)
 
