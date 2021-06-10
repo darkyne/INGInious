@@ -8,6 +8,11 @@ import subprocess
 import resource
 import stat
 import time
+from enum import Enum
+
+class User(Enum):
+    root = 0
+    worker = 1
 
 def set_limits_user(user):
     if user == "worker":
@@ -55,12 +60,12 @@ def start_ssh_server(ssh_user):
     if os.path.exists("/run/nologin"):
         os.unlink("/run/nologin")
 
-    PermitRootLogin = "yes" if ssh_user == "root" else "no"
+    permit_root_login = "yes" if ssh_user == "root" else "no"
 
     # Start the ssh server
     execute_process(["/usr/sbin/sshd",
                     "-p", "22",
-                    "-o", "PermitRootLogin={}".format(PermitRootLogin),
+                    "-o", "PermitRootLogin={}".format(permit_root_login),
                     "-o", "PasswordAuthentication=yes", "-o", "StrictModes=no", "-o",
                     "AllowUsers={}".format(ssh_user)], internal_command=True, user=ssh_user)
     return ssh_user, password

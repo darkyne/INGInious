@@ -10,8 +10,9 @@ import subprocess
 import threading
 import msgpack
 import array
-import sys
-from inginious_container_api.utils import set_limits_user, start_ssh_server, ssh_wait
+from inginious_container_api.utils import set_limits_user, start_ssh_server, ssh_wait, User
+
+
 
 
 def handle_signals(subprocess, socket):
@@ -77,9 +78,9 @@ os.chdir(start_cmd["working_dir"])
 print("Popen")
 print(fds)
 
-set_limits = (lambda: set_limits_user(user))  # To know if the command should be executed as root or worker
+set_limits = lambda: set_limits_user(user)  # To know if the command should be executed as root or worker
 if start_cmd["command"] is None or start_cmd["command"] == "":  # Avoid to ron an empty command
-    start_cmd["command"] = "echo 'student_container started' "
+    start_cmd["command"] = "echo 'info: student container started with no command set' "
 
 # Run the command
 p = subprocess.Popen(shlex.split(start_cmd["command"]), preexec_fn=set_limits, stdin=fds[0], stdout=fds[1], stderr=fds[2])
@@ -95,10 +96,10 @@ if start_cmd["ssh"]:
     # Start ssh server
     ssh_user, password = start_ssh_server(user)
     # Send ssh information
-    ssh_user_value = 0 if ssh_user == "worker" else 1  # 0 for worker, 1 for root
-    message = {"type": "ssh_student", "ssh_user": ssh_user_value, "password": password}
-    assert (sys.getsizeof(message)) == 240  # Ensure a constant size of 240 bytes
-    client.send(msgpack.dumps(message))
+    ssh_user_bin = User[ssh_user].value  # 0 for root, 1 for worker
+    message = msgpack.dumps({"type": "ssh_student", "ssh_user": ssh_user_bin, "password": password})
+    assert len(message) == 54  # Ensure a constant size (54 bytes)
+    client.send(message)
     # Wait for user to connect and leave
     retval = ssh_wait(ssh_user)
     print("Exiting")
