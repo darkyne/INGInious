@@ -198,6 +198,9 @@ class INGIniousMainRunner:
                                          "socket_id": message["socket_id"],
                                          "ssh": message["ssh"]})
                 return False
+            if message["type"] == "run_student_ask_retval":
+                # ignore, just a dummy message
+                return False
             if message["type"] == "done":
                 await self.intern.send_multipart([addr, b'', msgpack.dumps({"type": "ok"}, use_bin_type=True)])
                 return True

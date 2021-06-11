@@ -97,8 +97,7 @@ if start_cmd["ssh"]:
     ssh_user, password = start_ssh_server(user)
     # Send ssh information
     ssh_user_bin = User[ssh_user].value  # 0 for root, 1 for worker
-    message = msgpack.dumps({"type": "ssh_student", "ssh_user": ssh_user_bin, "password": password})
-    assert len(message) == 54  # Ensure a constant size (54 bytes)
+    message = msgpack.dumps({"type": "ssh_student", "ssh_user": ssh_user_bin, "password": password})  # constant size
     client.send(message)
     # Wait for user to connect and leave
     retval = ssh_wait(ssh_user)

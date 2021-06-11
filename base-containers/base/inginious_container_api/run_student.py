@@ -99,6 +99,9 @@ def run_student(cmd, container=None,
         assert message["type"] == "run_student_started"
         student_container_id = message["container_id"]
 
+        # Send a dummy message to ask for retval (this should not be removed without caution)
+        zmq_socket.send(msgpack.dumps({"type": "run_student_ask_retval", "socket_id": socket_id}, use_bin_type=True))
+
         # Serve one and only one connection
         connection, addr = server.accept()
 
@@ -118,7 +121,9 @@ def run_student(cmd, container=None,
             signal_handler_callback(receive_signal)
 
         if ssh:  # The student_container will send id and password for ssh connection, transfer it to the agent
-            ssh_id = msgpack.loads(connection.recv(54))  # The message is asserted to be 54 bytes before sending
+            message_size = len(msgpack.dumps({"type": "ssh_student", "ssh_user": 1, "password": "XXXXXXXXXXXXXXXX"}))
+            # message_size computes the size of a dummy message representing the expected constant size
+            ssh_id = msgpack.loads(connection.recv(message_size))
             if ssh_id["type"] == "ssh_student":
                 ssh_user = User(ssh_id["ssh_user"]).name  # 0 for root, 1 for worker
                 msg = {"type": "ssh_student", "ssh_user": ssh_user, "ssh_key": ssh_id["password"], "container_id": student_container_id}
