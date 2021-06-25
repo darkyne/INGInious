@@ -12,6 +12,8 @@ import zmq.asyncio
 import msgpack
 import zmq
 
+import time
+
 from inginious_container_api.utils import User
 
 def run_student(cmd, container=None,
@@ -48,13 +50,56 @@ def run_student(cmd, container=None,
         - 253 means that the command timed out
         - 254 means that an error occurred while running the proxy
     """
-    if not os.path.exists("/.__input/__shared_kernel"):  # disable run_student when the kernel is not shared (TODO fix me)
-        print("run_student is not available with Kata yet")
-        return 251
 
-    if os.path.exists("/.__input/__shared_kernel") and run_as_root:  # Allowing root access to student is forbidden for now (TODO fiw me)
-        print("run_student as root is not available yet")
-        return 251
+    # grading_container or student_container is on KATA
+    if not os.path.exists("/.__input/__shared_kernel") or run_as_root:
+
+        if working_dir is None:
+            working_dir = os.getcwd()
+        if stdin is None:
+            stdin = open(os.devnull, 'rb').fileno()
+        if stdout is None:
+            stdout = open(os.devnull, 'rb').fileno()
+        if stderr is None:
+            stderr = open(os.devnull, 'rb').fileno()
+        user = "root" if run_as_root else "worker"
+
+        # creates a placeholder for the socket
+        DIR = "/sockets/"
+        _, path = tempfile.mkstemp('', 'p', DIR)
+
+        # Gets the socket id
+        socket_id = os.path.split(path)[-1]
+        socket_path = os.path.join(DIR, socket_id + ".sock")
+
+        # Kindly ask the agent to start a new container linked to our socket
+        context = zmq.Context()
+        zmq_socket = context.socket(zmq.REQ)
+        zmq_socket.connect("ipc:///sockets/main.sock")
+        print("TEST:    Sending message asking agent to create student_container")
+        zmq_socket.send(msgpack.dumps({"type": "run_student", "environment": container,
+                                       "time_limit": time_limit, "hard_time_limit": hard_time_limit,
+                                       "memory_limit": memory_limit, "share_network": share_network,
+                                       "socket_id": socket_id, "ssh": ssh, "run_as_root": run_as_root},
+                                      use_bin_type=True))
+
+        # Check if the container was correctly started
+        message = msgpack.loads(zmq_socket.recv(), use_list=False, strict_map_key=False)
+        assert message["type"] == "run_student_started"
+        student_container_id = message["container_id"]
+
+        print("TEST:    Sending message with command")
+        # Send the command to the student_container via the agent
+        zmq_socket.send(msgpack.dumps({"type": "run_student_command", "student_container_id": student_container_id, "command": cmd, "working_dir": working_dir, "ssh": ssh, "user": user}, use_bin_type=True))
+
+
+
+        time.sleep(60)
+        return "ok"
+
+
+
+    print("Both grading and student containers are on docker")
 
     if working_dir is None:
         working_dir = os.getcwd()
@@ -89,17 +134,18 @@ def run_student(cmd, container=None,
         context = zmq.Context()
         zmq_socket = context.socket(zmq.REQ)
         zmq_socket.connect("ipc:///sockets/main.sock")
+        print("TEST:    Sending message asking agent to create student_container")
         zmq_socket.send(msgpack.dumps({"type": "run_student", "environment": container,
                                    "time_limit": time_limit, "hard_time_limit": hard_time_limit,
                                    "memory_limit": memory_limit, "share_network": share_network,
-                                   "socket_id": socket_id, "ssh": ssh}, use_bin_type=True))
+                                   "socket_id": socket_id, "ssh": ssh, "run_as_root": run_as_root}, use_bin_type=True))
 
         # Check if the container was correctly started
         message = msgpack.loads(zmq_socket.recv(), use_list=False, strict_map_key=False)
         assert message["type"] == "run_student_started"
         student_container_id = message["container_id"]
 
-        # Send a dummy message to ask for retval (this should not be removed without caution)
+        # Send a dummy message to ask for retval (because REQ socket should alternate between send and recv)
         zmq_socket.send(msgpack.dumps({"type": "run_student_ask_retval", "socket_id": socket_id}, use_bin_type=True))
 
         # Serve one and only one connection

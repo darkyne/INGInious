@@ -300,6 +300,10 @@ class DockerAgent(Agent):
         environment = self._containers[environment_type][environment_name]["id"]
         runtime = self._containers[environment_type][environment_name]["runtime"]
 
+
+        print("TEST:    grading_container runtime: "+runtime)
+
+
         ports_needed = list(self._containers[environment_type][environment_name]["ports"])  # copy, as we modify it later!
 
         if debug == "ssh" and 22 not in ports_needed:
@@ -423,7 +427,7 @@ class DockerAgent(Agent):
         await self._timeout_watcher.register_container(out.container_id, out.time_limit, out.hard_time_limit)
 
     async def create_student_container(self, parent_info, socket_id, environment_name,
-                                       memory_limit, time_limit, hard_time_limit, share_network, write_stream, ssh):
+                                       memory_limit, time_limit, hard_time_limit, share_network, write_stream, ssh, run_as_root):
         """
         Creates a new student container.
         :param write_stream: stream on which to write the return value of the container (with a correctly formatted msgpack message)
@@ -441,12 +445,23 @@ class DockerAgent(Agent):
                 return
 
             environment = self._containers[environment_type][environment_name]["id"]
-            runtime = self._containers[environment_type][environment_name]["runtime"]
+
+            # runtime = self._containers[environment_type][environment_name]["runtime"] # by default, use the same runtime sa the grading_container
 
             if ssh:
                 ports_needed = [22]
             else:
                 ports_needed = []
+
+            #  TODO: Hard-coding is ugly
+            if run_as_root:
+                runtime = "kata-runtime"
+            else:
+                runtime = "io.containerd.runc.v2"
+
+            print("TEST     student_container runtime is: " + runtime)
+
+
 
             ports = {}
             for p in ports_needed:
@@ -463,6 +478,7 @@ class DockerAgent(Agent):
                                                                            parent_info.course_common_student_path,
                                                                            parent_info.container_id if share_network else None,
                                                                            ports)
+                print("TEST:    student_container created")
             except Exception as e:
                 self._logger.exception("Cannot create student container!")
                 await self._write_to_container_stdin(write_stream, {"type": "run_student_retval", "retval": 254, "socket_id": socket_id})
@@ -486,11 +502,11 @@ class DockerAgent(Agent):
             parent_info.student_containers.add(container_id)
             self._student_containers_running[container_id] = info
 
-            # send to the container that the sibling has started
-            await self._write_to_container_stdin(write_stream, {"type": "run_student_started", "socket_id": socket_id, "container_id": container_id})
 
             try:
+                print("TEST:    trying to start student_container")
                 await self._docker.start_container(container_id)
+                print("TEST:    student_container started")
             except Exception as e:
                 self._logger.exception("Cannot start student container!")
                 await self._write_to_container_stdin(write_stream, {"type": "run_student_retval", "retval": 254, "socket_id": socket_id})
@@ -500,6 +516,10 @@ class DockerAgent(Agent):
 
                 return
 
+            # send to the container that the sibling has started
+            await self._write_to_container_stdin(write_stream,
+                                                     {"type": "run_student_started", "socket_id": socket_id,
+                                                      "container_id": container_id})
             # Verify the time limit
             await self._timeout_watcher.register_container(container_id, time_limit, hard_time_limit)
         except asyncio.CancelledError:
@@ -569,10 +589,24 @@ class DockerAgent(Agent):
                                 share_network = msg["share_network"]
                                 socket_id = msg["socket_id"]
                                 ssh = msg["ssh"]
+                                run_as_root = msg["run_as_root"]
                                 assert "/" not in socket_id  # ensure task creator do not try to break the agent :-(
                                 self._create_safe_task(self.create_student_container(info, socket_id, environment, memory_limit,
                                                                                      time_limit, hard_time_limit, share_network,
-                                                                                     write_stream, ssh))
+                                                                                     write_stream, ssh, run_as_root))
+                            elif msg["type"] == "run_student_command":
+                                # This part sould be placed in a separated thread
+                                print("received command and sent it to the student_container")
+                                student_container_id = msg["student_container_id"]
+                                student_sock = await self._docker.attach_to_container(student_container_id)
+                                student_read_stream, student_write_stream = await asyncio.open_connection(sock=student_sock.get_socket())
+                                await self._write_to_container_stdin(student_write_stream,
+                                                                     {"type": "run_student_command",
+                                                                      "command": msg["command"],
+                                                                      "working_dir": msg["working_dir"],
+                                                                      "ssh": msg["ssh"],
+                                                                      "user": msg["user"]})
+                                #Should start a subprocess to handle messages on student_read_stream
                             elif msg["type"] == "ssh_debug":
                                 # send the data to the frontend (and client) to reach grading_container
                                 self._logger.info("%s %s", info.container_id, str(msg))
